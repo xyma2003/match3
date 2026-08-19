@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import { ChangeEvent, FormEvent, PointerEvent, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -9,7 +10,15 @@ type Asset = { id: string; name: string; url: string; emoji?: string };
 type Cell = { id: string; type: number; special: Special };
 type Group = { indices: number[]; direction: "row" | "col" };
 type AccountUser = { id: string; username: string; recoveryEmail: string | null };
-type CloudGame = { id: string; name: string; currentLevel: number; highestLevel: number; highestScore: number };
+type CloudGame = {
+  id: string;
+  name: string;
+  currentLevel: number;
+  highestLevel: number;
+  highestScore: number;
+  normalAssets: string[];
+  bossAsset: string | null;
+};
 
 const SIZE = 8;
 const TYPES = 5;
@@ -203,31 +212,36 @@ export default function Home() {
   const [user, setUser] = useState<AccountUser | null>(null);
   const [cloudGames, setCloudGames] = useState<CloudGame[]>([]);
   const [activeGameId, setActiveGameId] = useState<string | null>(null);
+  const [assetUploading, setAssetUploading] = useState(false);
+  const [assetMessage, setAssetMessage] = useState("");
   const urls = useRef<string[]>([]);
   const pointer = useRef<{ index: number; x: number; y: number } | null>(null);
   const swiped = useRef(false);
   const comboTimer = useRef<number | null>(null);
   const shuffleTimer = useRef<number | null>(null);
+  const comboId = useRef(0);
 
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem("custom-match3-progress") ?? "null");
-      if (saved) {
-        if (typeof saved.gameName === "string" && saved.gameName !== "我的") setGameName(saved.gameName.slice(0, 10));
-        if (Number.isInteger(saved.level) && saved.level > 0) setLevel(saved.level);
-        if (Number.isInteger(saved.highestLevel) && saved.highestLevel > 0) setHighestLevel(saved.highestLevel);
-        if (Number.isInteger(saved.highestScore) && saved.highestScore >= 0) setHighestScore(saved.highestScore);
-      }
-    } catch { /* Ignore invalid local progress. */ }
-    setProgressLoaded(true);
+    const objectUrls = urls.current;
+    const loadTimer = window.setTimeout(() => {
+      try {
+        const saved = JSON.parse(localStorage.getItem("custom-match3-progress") ?? "null");
+        if (saved) {
+          if (typeof saved.gameName === "string" && saved.gameName !== "我的") setGameName(saved.gameName.slice(0, 10));
+          if (Number.isInteger(saved.level) && saved.level > 0) setLevel(saved.level);
+          if (Number.isInteger(saved.highestLevel) && saved.highestLevel > 0) setHighestLevel(saved.highestLevel);
+          if (Number.isInteger(saved.highestScore) && saved.highestScore >= 0) setHighestScore(saved.highestScore);
+        }
+      } catch { /* Ignore invalid local progress. */ }
+      setProgressLoaded(true);
+    }, 0);
     return () => {
-      urls.current.forEach(URL.revokeObjectURL);
+      window.clearTimeout(loadTimer);
+      objectUrls.forEach(URL.revokeObjectURL);
       if (comboTimer.current) window.clearTimeout(comboTimer.current);
       if (shuffleTimer.current) window.clearTimeout(shuffleTimer.current);
     };
   }, []);
-
-  useEffect(() => { void restoreAccount(); }, []);
 
   useEffect(() => {
     if (!progressLoaded) return;
@@ -261,6 +275,40 @@ export default function Home() {
     return list[item.type % list.length];
   };
 
+  function assetsFromGame(game: CloudGame): Record<TierId, Asset[]> {
+    return {
+      normal: game.normalAssets.map((url, index) => ({ id: `cloud-normal-${game.id}-${index}`, name: `图案 ${index + 1}`, url })),
+      boss: game.bossAsset ? [{ id: `cloud-boss-${game.id}`, name: "Boss", url: game.bossAsset }] : [],
+    };
+  }
+
+  async function uploadCloudAssets(tier: TierId, files: File[]) {
+    if (!activeGameId) return;
+    setAssetUploading(true);
+    setAssetMessage("正在保存图片…");
+    try {
+      const form = new FormData();
+      form.set("gameId", activeGameId);
+      form.set("tier", tier);
+      files.forEach((file) => form.append("files", file));
+      const response = await fetch("/api/assets", { method: "POST", body: form });
+      const data = await response.json() as { assets?: { key: string; url: string }[]; error?: string };
+      if (!response.ok || !data.assets) {
+        setAssetMessage(data.error ?? "图片保存失败，请稍后重试");
+        return;
+      }
+      setAssets((current) => ({
+        ...current,
+        [tier]: data.assets!.map((asset, index) => ({ id: asset.key, name: tier === "boss" ? "Boss" : `图案 ${index + 1}`, url: asset.url })),
+      }));
+      setAssetMessage("图片已保存");
+    } catch {
+      setAssetMessage("图片保存失败，请稍后重试");
+    } finally {
+      setAssetUploading(false);
+    }
+  }
+
   function upload(tier: TierId, event: ChangeEvent<HTMLInputElement>) {
     const max = tier === "boss" ? 1 : 5;
     const files = Array.from(event.target.files ?? []).filter((file) => file.type.startsWith("image/")).slice(0, max);
@@ -270,6 +318,8 @@ export default function Home() {
       return { id: `${tier}-${file.name}-${file.lastModified}-${index}`, name: file.name, url };
     });
     setAssets((current) => ({ ...current, [tier]: next }));
+    setAssetMessage(user && activeGameId ? "准备保存图片…" : "");
+    if (user && activeGameId && files.length) void uploadCloudAssets(tier, files);
   }
 
   function startLevel(targetLevel = level) {
@@ -289,7 +339,7 @@ export default function Home() {
     setStarted(true);
   }
 
-  function finishMove(nextBoard: Cell[], gained: number, made: Special | null) {
+  function finishMove(nextBoard: Cell[], gained: number) {
     const nextMoves = moves - 1;
     const nextScore = score + gained;
     const reshuffled = !hasMove(nextBoard);
@@ -315,7 +365,8 @@ export default function Home() {
 
   function showCombo(count: number, comboScore: number) {
     if (comboTimer.current) window.clearTimeout(comboTimer.current);
-    setComboNotice({ id: Date.now(), count, score: comboScore });
+    comboId.current += 1;
+    setComboNotice({ id: comboId.current, count, score: comboScore });
     comboTimer.current = window.setTimeout(() => setComboNotice(null), 950);
   }
 
@@ -343,10 +394,9 @@ export default function Home() {
     await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
   }
 
-  async function playCascades(startBoard: Cell[], preferred?: number, startingScore = 0, startingMade: Special | null = null) {
+  async function playCascades(startBoard: Cell[], preferred?: number, startingScore = 0) {
     let current = startBoard;
     let gained = startingScore;
-    let made = startingMade;
     for (let round = 0; round < 12; round++) {
       const step = resolveRound(current, preferred);
       if (!step) break;
@@ -357,10 +407,9 @@ export default function Home() {
       await wait(110);
       current = step.board;
       gained += step.gained;
-      if (!made || step.made === "boss") made = step.made ?? made;
       preferred = undefined;
     }
-    finishMove(current, gained, made);
+    finishMove(current, gained);
   }
 
   function trySwap(first: number, second: number) {
@@ -388,7 +437,7 @@ export default function Home() {
           if (bothBoss) {
             const fresh = makeBoard();
             await animateDrop(fresh);
-            finishMove(fresh, swapped.length * 20, null);
+            finishMove(fresh, swapped.length * 20);
             return;
           }
           const cleared = swapped.map((item, index) => clearIndices.has(index) ? null : item);
@@ -475,6 +524,7 @@ export default function Home() {
       setLevel(game.currentLevel);
       setHighestLevel(game.highestLevel);
       setHighestScore(game.highestScore);
+      setAssets(assetsFromGame(game));
     }
   }
 
@@ -485,8 +535,15 @@ export default function Home() {
       const data = await response.json() as { user: AccountUser };
       setUser(data.user);
       await loadCloudGames();
-    } catch { /* The guest experience remains available when D1 is offline. */ }
+    } catch { /* The guest experience remains available when cloud storage is offline. */ }
   }
+
+  /* eslint-disable react-hooks/exhaustive-deps */
+  useEffect(() => {
+    const timer = window.setTimeout(() => void restoreAccount(), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -537,6 +594,8 @@ export default function Home() {
     setLevel(game.currentLevel);
     setHighestLevel(game.highestLevel);
     setHighestScore(game.highestScore);
+    setAssets(assetsFromGame(game));
+    setAssetMessage("");
     setStarted(false);
     setAuthOpen(false);
   }
@@ -570,7 +629,8 @@ export default function Home() {
             </div>
             <div className="uploadPanel">
               <div className="uploadCopy"><div><h3>{tiers.find((tier) => tier.id === activeTier)?.name}</h3><p>{tiers.find((tier) => tier.id === activeTier)?.help}</p></div></div>
-              <label className="dropzone"><input type="file" accept="image/*" multiple={activeTier !== "boss"} onChange={(event) => upload(activeTier, event)} /><span className="plus">＋</span><strong>{assets[activeTier].length ? "重新选择图片" : "点击选择图片"}</strong><small>{activeTier === "boss" ? "选择 1 张方形图片" : "建议按相同顺序选择 5 张图片"}</small></label>
+              <label className={`dropzone ${assetUploading ? "uploading" : ""}`}><input type="file" accept="image/*" multiple={activeTier !== "boss"} disabled={assetUploading} onChange={(event) => upload(activeTier, event)} /><span className="plus">＋</span><strong>{assetUploading ? "正在保存…" : assets[activeTier].length ? "重新选择图片" : "点击选择图片"}</strong><small>{activeTier === "boss" ? "选择 1 张方形图片" : "建议按相同顺序选择 5 张图片"}</small></label>
+              {assetMessage && <p className="assetMessage" role="status">{assetMessage}</p>}
               <div className="previews">{currentAssets(activeTier).map((asset, index) => <div className="previewWrap" key={asset.id}><div className="previewTile">{asset.emoji ? <span>{asset.emoji}</span> : <img src={asset.url} alt={asset.name} />}</div><small>{activeTier === "boss" ? "Boss" : index + 1}</small></div>)}{!assets[activeTier].length && <p>当前使用示例图案</p>}</div>
             </div>
             <div className="studioFooter"><div><strong>{assets.normal.length + assets.boss.length || 6}</strong><span>张素材已就绪</span></div><button className="primaryButton" onClick={() => startLevel()}>开始游戏 <span>→</span></button></div>
@@ -615,7 +675,7 @@ export default function Home() {
               <button className={authMode === "register" ? "active" : ""} onClick={() => switchAuthMode("register")}>注册</button>
             </div>
             <form className="authForm" onSubmit={submitAuth}>
-              <label><span>用户名</span><input autoFocus value={authUsername} onChange={(event) => setAuthUsername(event.target.value.replace(/\s/g, ""))} maxLength={16} autoComplete="username" placeholder="中文、字母或数字" /></label>
+              <label><span>用户名</span><input value={authUsername} onChange={(event) => setAuthUsername(event.target.value.replace(/\s/g, ""))} maxLength={16} autoComplete="username" placeholder="中文、字母或数字" /></label>
               <label><span>密码</span><input type="password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} minLength={8} autoComplete={authMode === "login" ? "current-password" : "new-password"} placeholder="至少 8 位" /></label>
               {authMode === "register" && <label><span>找回邮箱 <i>选填</i></span><input type="email" value={recoveryEmail} onChange={(event) => setRecoveryEmail(event.target.value.trim())} autoComplete="email" placeholder="用于找回密码" /></label>}
               {authMessage && <p className="authMessage" role="status">{authMessage}</p>}

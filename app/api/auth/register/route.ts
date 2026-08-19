@@ -1,7 +1,7 @@
-import { eq } from "drizzle-orm";
-import { getDb } from "@/db";
-import { games, users } from "@/db/schema";
-import { createSession, hashPassword, sessionCookie, validatePassword, validateRecoveryEmail, validateUsername } from "@/app/lib/auth";
+import { createSession, hashPassword, sessionCookie, sha256, validatePassword, validateRecoveryEmail, validateUsername } from "@/app/lib/auth";
+import { createJSON, GameRecord, gameKey, UserRecord, usernameKey, writeJSON } from "@/app/lib/store";
+
+export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
@@ -14,13 +14,10 @@ export async function POST(request: Request) {
     const emailError = validateRecoveryEmail(recoveryEmail);
     if (emailError) return Response.json({ error: emailError }, { status: 400 });
 
-    const db = getDb();
-    const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.usernameNormalized, checked.normalized)).limit(1);
-    if (existing) return Response.json({ error: "这个用户名已经被使用" }, { status: 409 });
-
     const userId = crypto.randomUUID();
     const password = await hashPassword(payload.password ?? "");
-    await db.insert(users).values({
+    const now = new Date().toISOString();
+    const user: UserRecord = {
       id: userId,
       username: checked.username,
       usernameNormalized: checked.normalized,
@@ -28,16 +25,31 @@ export async function POST(request: Request) {
       passwordSalt: password.salt,
       passwordIterations: password.iterations,
       recoveryEmail: recoveryEmail || null,
-    });
-    await db.insert(games).values({ id: crypto.randomUUID(), userId, name: "奶龙" });
-    const session = await createSession(userId);
+      createdAt: now,
+      updatedAt: now,
+    };
+    const created = await createJSON(usernameKey(await sha256(checked.normalized)), user);
+    if (!created) return Response.json({ error: "这个用户名已经被使用" }, { status: 409 });
+
+    const game: GameRecord = {
+      id: crypto.randomUUID(),
+      userId,
+      name: "奶龙",
+      currentLevel: 1,
+      highestLevel: 1,
+      highestScore: 0,
+      normalAssetKeys: [],
+      bossAssetKey: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await writeJSON(gameKey(userId, game.id), game);
+    const session = await createSession({ id: userId, username: user.username, recoveryEmail: user.recoveryEmail });
     return Response.json({ user: { id: userId, username: checked.username, recoveryEmail: recoveryEmail || null } }, {
       status: 201,
       headers: { "Set-Cookie": sessionCookie(session.token, request) },
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "注册失败";
-    if (message.includes("UNIQUE constraint failed")) return Response.json({ error: "这个用户名已经被使用" }, { status: 409 });
+  } catch {
     return Response.json({ error: "注册暂时不可用，请稍后重试" }, { status: 500 });
   }
 }

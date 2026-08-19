@@ -26,12 +26,12 @@ npm run dev
 npm run build
 ```
 
-## 数据库
+## 云端数据
 
-当前后端使用 Cloudflare D1，数据库结构和迁移位于 `db/` 与 `drizzle/`。
-实际账号、密码哈希、游戏进度等线上数据不会保存在 Git 仓库中。
+登录账号、游戏进度和用户上传的图片均保存到 EdgeOne Pages Blob；游客进度仍保存在当前浏览器中。
+实际账号、密码哈希、游戏进度和上传图片不会保存在 Git 仓库中。
 
 ## 部署
 
-当前版本可部署至 Cloudflare Workers。项目后续计划适配 EdgeOne Makers，
-以改善中国大陆网络的访问体验。
+当前版本使用 Next.js，可直接从 GitHub 仓库导入并部署到腾讯云 EdgeOne Pages。
+部署时无需填写构建命令之外的数据库连接信息，首次写入时会自动建立所需的 Blob 数据。

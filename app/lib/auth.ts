@@ -1,6 +1,4 @@
-import { and, eq, gt } from "drizzle-orm";
-import { getDb } from "@/db";
-import { sessions, users } from "@/db/schema";
+import { deleteKey, readJSON, SessionRecord, sessionKey, usernameKey, writeJSON } from "@/app/lib/store";
 
 const SESSION_COOKIE = "nailong_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -22,7 +20,8 @@ function base64ToBytes(value: string) {
 
 async function derivePassword(password: string, salt: Uint8Array, iterations: number) {
   const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256);
+  const saltBuffer = salt.buffer.slice(salt.byteOffset, salt.byteOffset + salt.byteLength) as ArrayBuffer;
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: saltBuffer, iterations }, key, 256);
   return new Uint8Array(bits);
 }
 
@@ -41,13 +40,17 @@ export async function verifyPassword(password: string, hash: string, salt: strin
   return difference === 0;
 }
 
-async function sha256(value: string) {
+export async function sha256(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 export function normalizeUsername(username: string) {
   return username.normalize("NFKC").toLocaleLowerCase("zh-CN");
+}
+
+export async function findUserKey(username: string) {
+  return usernameKey(await sha256(normalizeUsername(username)));
 }
 
 export function validateUsername(value: string) {
@@ -69,11 +72,18 @@ export function validateRecoveryEmail(email: string) {
   return null;
 }
 
-export async function createSession(userId: string) {
+export async function createSession(user: SessionUser) {
   const token = bytesToBase64(crypto.getRandomValues(new Uint8Array(32))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const tokenHash = await sha256(token);
   const expiresAt = Math.floor(Date.now() / 1000) + SESSION_SECONDS;
-  await getDb().insert(sessions).values({ tokenHash, userId, expiresAt });
+  await writeJSON(sessionKey(tokenHash), {
+    tokenHash,
+    userId: user.id,
+    username: user.username,
+    recoveryEmail: user.recoveryEmail,
+    expiresAt,
+    createdAt: new Date().toISOString(),
+  } satisfies SessionRecord);
   return { token, expiresAt };
 }
 
@@ -100,17 +110,18 @@ export async function getSessionUser(request: Request): Promise<SessionUser | nu
   const token = getSessionToken(request);
   if (!token) return null;
   const tokenHash = await sha256(token);
-  const [row] = await getDb()
-    .select({ id: users.id, username: users.username, recoveryEmail: users.recoveryEmail })
-    .from(sessions)
-    .innerJoin(users, eq(sessions.userId, users.id))
-    .where(and(eq(sessions.tokenHash, tokenHash), gt(sessions.expiresAt, Math.floor(Date.now() / 1000))))
-    .limit(1);
-  return row ?? null;
+  const key = sessionKey(tokenHash);
+  const session = await readJSON<SessionRecord>(key);
+  if (!session) return null;
+  if (session.expiresAt <= Math.floor(Date.now() / 1000)) {
+    await deleteKey(key);
+    return null;
+  }
+  return { id: session.userId, username: session.username, recoveryEmail: session.recoveryEmail };
 }
 
 export async function deleteSession(request: Request) {
   const token = getSessionToken(request);
   if (!token) return;
-  await getDb().delete(sessions).where(eq(sessions.tokenHash, await sha256(token)));
+  await deleteKey(sessionKey(await sha256(token)));
 }

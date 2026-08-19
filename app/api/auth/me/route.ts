@@ -1,5 +1,7 @@
 import { getSessionUser } from "@/app/lib/auth";
 
+export const runtime = "nodejs";
+
 export async function GET(request: Request) {
   try {
     const user = await getSessionUser(request);
