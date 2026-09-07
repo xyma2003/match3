@@ -33,5 +33,26 @@ npm run build
 
 ## 部署
 
-当前版本使用 Next.js，可直接从 GitHub 仓库导入并部署到腾讯云 EdgeOne Pages。
-部署时无需填写构建命令之外的数据库连接信息，首次写入时会自动建立所需的 Blob 数据。
+当前线上版本部署在腾讯云 EdgeOne Pages（Makers），代码来源为
+[`xyma2003/match3`](https://github.com/xyma2003/match3) 的 `main` 分支。
+
+### EdgeOne Pages 部署步骤
+
+1. 在 EdgeOne Pages（Makers）中选择“导入 Git 仓库”。
+2. 连接 GitHub，并选择 `xyma2003/match3`。
+3. 将生产分支设为 `main`，项目根目录保持为仓库根目录。
+4. 使用 `npm install` 安装依赖，并用 `npm run build` 执行正式构建。
+5. 部署完成后，在部署记录中生成预览链接进行验证。
+
+项目通过 [`edgeone.json`](edgeone.json) 固定使用 Node.js 22.17.1。部署时不需要额外配置数据库连接；
+登录账号、游戏进度和用户上传图片会在首次写入时保存到名为 `nailong-match3` 的 EdgeOne Pages Blob 存储中。
+
+EdgeOne 生成的默认预览链接有有效期，只适合临时测试。长期分享需要在项目的“域名管理”中绑定已完成相应配置的自定义域名，
+例如 `game.goafield.cn`。绑定域名不会改变 GitHub 仓库或构建流程。
+
+每次部署前建议在本地运行：
+
+```bash
+npm run lint
+npm run build
+```
