@@ -23,6 +23,10 @@ updates:
           - eslint
           - "eslint-plugin-*"
           - typescript-eslint
+      styling:
+        patterns:
+          - "@tailwindcss/postcss"
+          - tailwindcss
       typescript:
         patterns:
           - typescript
@@ -42,6 +46,9 @@ updates:
       - dependency-name: "@types/node"
         versions:
           - ">=23"
+      - dependency-name: globals
+        versions:
+          - ">=17"
 
   - package-ecosystem: github-actions
     directory: /
