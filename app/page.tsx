@@ -9,7 +9,7 @@ type Special = "none" | "row" | "col" | "cross" | "boss";
 type Asset = { id: string; name: string; url: string; emoji?: string };
 type Cell = { id: string; type: number; special: Special };
 type Group = { indices: number[]; direction: "row" | "col" };
-type AccountUser = { id: string; username: string; recoveryEmail: string | null };
+type AccountUser = { id: string; username: string };
 type CloudGame = {
   id: string;
   name: string;
@@ -206,7 +206,6 @@ export default function Home() {
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authUsername, setAuthUsername] = useState("");
   const [authPassword, setAuthPassword] = useState("");
-  const [recoveryEmail, setRecoveryEmail] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [user, setUser] = useState<AccountUser | null>(null);
@@ -562,7 +561,7 @@ export default function Home() {
       const response = await fetch(`/api/auth/${authMode === "login" ? "login" : "register"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password: authPassword, recoveryEmail }),
+        body: JSON.stringify({ username, password: authPassword }),
       });
       const data = await response.json() as { user?: AccountUser; error?: string };
       if (!response.ok || !data.user) {
@@ -677,7 +676,6 @@ export default function Home() {
             <form className="authForm" onSubmit={submitAuth}>
               <label><span>用户名</span><input value={authUsername} onChange={(event) => setAuthUsername(event.target.value.replace(/\s/g, ""))} maxLength={16} autoComplete="username" placeholder="中文、字母或数字" /></label>
               <label><span>密码</span><input type="password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} minLength={8} autoComplete={authMode === "login" ? "current-password" : "new-password"} placeholder="至少 8 位" /></label>
-              {authMode === "register" && <label><span>找回邮箱 <i>选填</i></span><input type="email" value={recoveryEmail} onChange={(event) => setRecoveryEmail(event.target.value.trim())} autoComplete="email" placeholder="用于找回密码" /></label>}
               {authMessage && <p className="authMessage" role="status">{authMessage}</p>}
               <button className="authSubmit" type="submit" disabled={authLoading}>{authLoading ? "请稍候…" : authMode === "login" ? "登录" : "创建账号"}</button>
             </form>

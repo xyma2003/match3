@@ -1,10 +1,10 @@
 import { getSessionUser } from "@/app/lib/auth";
 import {
+  assetUrl,
   GameRecord,
   gameKey,
   gamePrefix,
   listJSON,
-  publicAssetUrl,
   readJSON,
   writeJSON,
 } from "@/app/lib/store";
@@ -15,11 +15,20 @@ function cleanName(value: string) {
   return value.replace(/消消乐/g, "").trim().slice(0, 10) || "奶龙";
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function optionalInteger(value: unknown, minimum: number) {
+  if (value === undefined) return undefined;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= minimum ? value : null;
+}
+
 function toClientGame(game: GameRecord) {
   return {
     ...game,
-    normalAssets: game.normalAssetKeys.map(publicAssetUrl),
-    bossAsset: game.bossAssetKey ? publicAssetUrl(game.bossAssetKey) : null,
+    normalAssets: game.normalAssetKeys.map(assetUrl),
+    bossAsset: game.bossAssetKey ? assetUrl(game.bossAssetKey) : null,
   };
 }
 
@@ -34,12 +43,15 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const user = await getSessionUser(request);
   if (!user) return Response.json({ error: "请先登录" }, { status: 401 });
-  const payload = await request.json() as { name?: string };
+  const rawPayload: unknown = await request.json();
+  if (!isObject(rawPayload) || (rawPayload.name !== undefined && typeof rawPayload.name !== "string")) {
+    return Response.json({ error: "游戏名称格式不正确" }, { status: 400 });
+  }
   const now = new Date().toISOString();
   const game: GameRecord = {
     id: crypto.randomUUID(),
     userId: user.id,
-    name: cleanName(payload.name ?? "奶龙"),
+    name: cleanName(rawPayload.name ?? "奶龙"),
     currentLevel: 1,
     highestLevel: 1,
     highestScore: 0,
@@ -55,20 +67,32 @@ export async function POST(request: Request) {
 export async function PUT(request: Request) {
   const user = await getSessionUser(request);
   if (!user) return Response.json({ error: "请先登录" }, { status: 401 });
-  const payload = await request.json() as { id?: string; name?: string; currentLevel?: number; highestLevel?: number; highestScore?: number };
-  if (!payload.id) return Response.json({ error: "缺少游戏记录" }, { status: 400 });
+  const rawPayload: unknown = await request.json();
+  if (!isObject(rawPayload) || typeof rawPayload.id !== "string" || !rawPayload.id) {
+    return Response.json({ error: "缺少游戏记录" }, { status: 400 });
+  }
+  if (rawPayload.name !== undefined && typeof rawPayload.name !== "string") {
+    return Response.json({ error: "游戏名称格式不正确" }, { status: 400 });
+  }
 
-  const key = gameKey(user.id, payload.id);
+  const requestedCurrentLevel = optionalInteger(rawPayload.currentLevel, 1);
+  const requestedHighestLevel = optionalInteger(rawPayload.highestLevel, 1);
+  const requestedHighestScore = optionalInteger(rawPayload.highestScore, 0);
+  if (requestedCurrentLevel === null || requestedHighestLevel === null || requestedHighestScore === null) {
+    return Response.json({ error: "游戏进度格式不正确" }, { status: 400 });
+  }
+
+  const key = gameKey(user.id, rawPayload.id);
   const existing = await readJSON<GameRecord>(key);
   if (!existing || existing.userId !== user.id) return Response.json({ error: "没有找到这个游戏" }, { status: 404 });
 
-  const currentLevel = Math.max(1, Math.floor(payload.currentLevel ?? existing.currentLevel));
+  const currentLevel = requestedCurrentLevel ?? existing.currentLevel;
   const updated: GameRecord = {
     ...existing,
-    name: cleanName(payload.name ?? existing.name),
+    name: cleanName(rawPayload.name ?? existing.name),
     currentLevel,
-    highestLevel: Math.max(existing.highestLevel, currentLevel, Math.floor(payload.highestLevel ?? currentLevel)),
-    highestScore: Math.max(existing.highestScore, Math.floor(payload.highestScore ?? 0)),
+    highestLevel: Math.max(existing.highestLevel, currentLevel, requestedHighestLevel ?? currentLevel),
+    highestScore: Math.max(existing.highestScore, requestedHighestScore ?? 0),
     updatedAt: new Date().toISOString(),
   };
   await writeJSON(key, updated);

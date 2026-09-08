@@ -18,7 +18,6 @@ export type SessionRecord = {
   tokenHash: string;
   userId: string;
   username: string;
-  recoveryEmail: string | null;
   expiresAt: number;
   createdAt: string;
 };
@@ -91,14 +90,14 @@ export function assetKey(userId: string, gameId: string, tier: "normal" | "boss"
   return `assets/${userId}/${gameId}/${tier}/${crypto.randomUUID()}-${safeName}`;
 }
 
-export function publicAssetUrl(key: string) {
+export function assetUrl(key: string) {
   return `/api/assets?key=${encodeURIComponent(key)}`;
 }
 
 export async function writeAsset(key: string, file: File) {
   const bytes = await file.arrayBuffer();
   await store().set(key, new Blob([bytes], { type: file.type || "application/octet-stream" }), {
-    cacheControl: "public, max-age=31536000, immutable",
+    cacheControl: "private, max-age=31536000, immutable",
   });
 }
 

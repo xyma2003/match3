@@ -1,21 +1,24 @@
-import { createSession, hashPassword, sessionCookie, sha256, validatePassword, validateRecoveryEmail, validateUsername } from "@/app/lib/auth";
-import { createJSON, GameRecord, gameKey, UserRecord, usernameKey, writeJSON } from "@/app/lib/store";
+import { createSession, hashPassword, sessionCookie, sha256, validatePassword, validateUsername } from "@/app/lib/auth";
+import { createJSON, deleteKey, GameRecord, gameKey, UserRecord, usernameKey, writeJSON } from "@/app/lib/store";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { username?: string; password?: string; recoveryEmail?: string };
-    const checked = validateUsername(payload.username ?? "");
+    const rawPayload: unknown = await request.json();
+    if (typeof rawPayload !== "object" || rawPayload === null || Array.isArray(rawPayload)) {
+      return Response.json({ error: "注册信息格式不正确" }, { status: 400 });
+    }
+    const payload = rawPayload as Record<string, unknown>;
+    const username = typeof payload.username === "string" ? payload.username : "";
+    const plainPassword = typeof payload.password === "string" ? payload.password : "";
+    const checked = validateUsername(username);
     if ("error" in checked) return Response.json({ error: checked.error }, { status: 400 });
-    const passwordError = validatePassword(payload.password ?? "");
+    const passwordError = validatePassword(plainPassword);
     if (passwordError) return Response.json({ error: passwordError }, { status: 400 });
-    const recoveryEmail = (payload.recoveryEmail ?? "").trim().toLocaleLowerCase();
-    const emailError = validateRecoveryEmail(recoveryEmail);
-    if (emailError) return Response.json({ error: emailError }, { status: 400 });
 
     const userId = crypto.randomUUID();
-    const password = await hashPassword(payload.password ?? "");
+    const password = await hashPassword(plainPassword);
     const now = new Date().toISOString();
     const user: UserRecord = {
       id: userId,
@@ -24,11 +27,12 @@ export async function POST(request: Request) {
       passwordHash: password.hash,
       passwordSalt: password.salt,
       passwordIterations: password.iterations,
-      recoveryEmail: recoveryEmail || null,
+      recoveryEmail: null,
       createdAt: now,
       updatedAt: now,
     };
-    const created = await createJSON(usernameKey(await sha256(checked.normalized)), user);
+    const userKey = usernameKey(await sha256(checked.normalized));
+    const created = await createJSON(userKey, user);
     if (!created) return Response.json({ error: "这个用户名已经被使用" }, { status: 409 });
 
     const game: GameRecord = {
@@ -43,12 +47,18 @@ export async function POST(request: Request) {
       createdAt: now,
       updatedAt: now,
     };
-    await writeJSON(gameKey(userId, game.id), game);
-    const session = await createSession({ id: userId, username: user.username, recoveryEmail: user.recoveryEmail });
-    return Response.json({ user: { id: userId, username: checked.username, recoveryEmail: recoveryEmail || null } }, {
-      status: 201,
-      headers: { "Set-Cookie": sessionCookie(session.token, request) },
-    });
+    const initialGameKey = gameKey(userId, game.id);
+    try {
+      await writeJSON(initialGameKey, game);
+      const session = await createSession({ id: userId, username: user.username });
+      return Response.json({ user: { id: userId, username: checked.username } }, {
+        status: 201,
+        headers: { "Set-Cookie": sessionCookie(session.token, request) },
+      });
+    } catch (error) {
+      await Promise.allSettled([deleteKey(initialGameKey), deleteKey(userKey)]);
+      throw error;
+    }
   } catch {
     return Response.json({ error: "注册暂时不可用，请稍后重试" }, { status: 500 });
   }

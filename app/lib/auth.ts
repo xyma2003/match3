@@ -5,7 +5,7 @@ const SESSION_SECONDS = 60 * 60 * 24 * 30;
 const PASSWORD_ITERATIONS = 210_000;
 const encoder = new TextEncoder();
 
-type SessionUser = { id: string; username: string; recoveryEmail: string | null };
+type SessionUser = { id: string; username: string };
 
 function bytesToBase64(bytes: Uint8Array) {
   let binary = "";
@@ -66,12 +66,6 @@ export function validatePassword(password: string) {
   return null;
 }
 
-export function validateRecoveryEmail(email: string) {
-  if (!email) return null;
-  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return "邮箱格式不正确";
-  return null;
-}
-
 export async function createSession(user: SessionUser) {
   const token = bytesToBase64(crypto.getRandomValues(new Uint8Array(32))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const tokenHash = await sha256(token);
@@ -80,7 +74,6 @@ export async function createSession(user: SessionUser) {
     tokenHash,
     userId: user.id,
     username: user.username,
-    recoveryEmail: user.recoveryEmail,
     expiresAt,
     createdAt: new Date().toISOString(),
   } satisfies SessionRecord);
@@ -117,7 +110,7 @@ export async function getSessionUser(request: Request): Promise<SessionUser | nu
     await deleteKey(key);
     return null;
   }
-  return { id: session.userId, username: session.username, recoveryEmail: session.recoveryEmail };
+  return { id: session.userId, username: session.username };
 }
 
 export async function deleteSession(request: Request) {

@@ -5,14 +5,19 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { username?: string; password?: string };
-    const username = (payload.username ?? "").trim().normalize("NFKC");
+    const rawPayload: unknown = await request.json();
+    if (typeof rawPayload !== "object" || rawPayload === null || Array.isArray(rawPayload)) {
+      return Response.json({ error: "登录信息格式不正确" }, { status: 400 });
+    }
+    const payload = rawPayload as Record<string, unknown>;
+    const username = (typeof payload.username === "string" ? payload.username : "").trim().normalize("NFKC");
+    const password = typeof payload.password === "string" ? payload.password : "";
     const user = await readJSON<UserRecord>(await findUserKey(username));
-    if (!user || !await verifyPassword(payload.password ?? "", user.passwordHash, user.passwordSalt, user.passwordIterations)) {
+    if (!user || !await verifyPassword(password, user.passwordHash, user.passwordSalt, user.passwordIterations)) {
       return Response.json({ error: "用户名或密码不正确" }, { status: 401 });
     }
-    const session = await createSession({ id: user.id, username: user.username, recoveryEmail: user.recoveryEmail });
-    return Response.json({ user: { id: user.id, username: user.username, recoveryEmail: user.recoveryEmail } }, {
+    const session = await createSession({ id: user.id, username: user.username });
+    return Response.json({ user: { id: user.id, username: user.username } }, {
       headers: { "Set-Cookie": sessionCookie(session.token, request) },
     });
   } catch {
